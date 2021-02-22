@@ -29,8 +29,6 @@ sig
   (* boundPow2 n == smallest power of 2 that is less-or-equal-to n *)
   val boundPow2: int -> int
 
-  val foreach: 'a ArraySlice.slice -> (int * 'a -> unit) -> unit
-
   (* if the array is short, then convert it to a string. otherwise only
    * show the first few elements and the last element *)
   val summarizeArray: int -> ('a -> string) -> 'a array -> string
@@ -46,6 +44,10 @@ sig
   val loop: (int * int) -> 'a -> ('a * int -> 'a) -> 'a
 
   val copyListIntoArray: 'a list -> 'a array -> int -> int
+
+  val arrayMap: ('a -> 'b) -> 'a ArraySlice.slice -> 'b ArraySlice.slice
+  val arrayScan: (('a * 'a) -> 'a) -> 'a -> int -> (int -> 'a) -> 'a ArraySlice.slice
+  val arrayFilter: (int -> bool) -> int -> (int -> 'a) -> 'a ArraySlice.slice
 end =
 struct
 
@@ -94,10 +96,6 @@ struct
 
   fun for (lo, hi) f =
     if lo >= hi then () else (f lo; for (lo+1, hi) f)
-
-  fun foreach s f =
-    ForkJoin.parfor 4096 (0, ArraySlice.length s)
-    (fn i => f (i, ArraySlice.sub (s, i)))
 
   fun copyListIntoArray xs arr i =
     case xs of
@@ -274,4 +272,38 @@ struct
           toInt v
         end)
 
+  fun arrayMap f arr =
+      if ArraySlice.length arr = 0 then ArraySlice.full (Array.fromList [])
+      else let val x = f (ArraySlice.sub(arr,0))
+               val output = Array.array(ArraySlice.length arr, x)
+               fun f' (i,_) = if i = 0 then x else f(ArraySlice.sub(arr,i))
+           in
+               Array.modifyi f' output;
+               ArraySlice.full output
+           end
+
+  fun arrayScan f x n get =
+      let val result = Array.array(n+1, x)
+          fun loop (i, acc) =
+              if i = n + 1 then ()
+              else let val acc' = f(acc, get (i-1))
+                   in Array.update(result,i,acc');
+                      loop(i+1, acc')
+                   end
+      in
+        loop(1, x);
+        ArraySlice.full result
+      end
+
+  fun arrayFilter p n get =
+      let val out = Array.tabulate(n, get)
+          fun pack (i, j) =
+              if i = n then j
+              else if p i
+              then pack (i+1,j)
+              else (Array.update(out,j,Array.sub(out,i));
+                    pack (i+1,j+1))
+          val m = pack (0,0)
+      in ArraySlice.slice(out, 0, SOME m)
+      end
 end

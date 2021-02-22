@@ -3,13 +3,13 @@
 structure GIF:
 sig
   type pixel = Color.pixel
-  type image = {height: int, width: int, data: pixel Seq.t}
+  type image = {height: int, width: int, data: pixel ArraySlice.slice}
 
   (* A GIF color palette is a table of up to 256 colors, and
    * function for remapping the colors of an image. *)
   structure Palette:
   sig
-    type t = {colors: pixel Seq.t, remap: image -> int Seq.t}
+    type t = {colors: pixel ArraySlice.slice, remap: image -> int ArraySlice.slice}
 
     (* Selects a set of "well-spaced" colors sampled from the image.
      * The first argument is a list of required colors, that must be
@@ -33,19 +33,19 @@ sig
      *   1. number of colors, and
      *   2. color indices (from palette remap)
      *)
-    val codeStream: int -> int Seq.t -> int Seq.t
+    val codeStream: int -> int ArraySlice.slice -> int ArraySlice.slice
 
     (* Second step of compression: pack the code stream into bits with
      * flexible bit-lengths. This step also inserts sub-block sizes.
      * The first argument is the number of colors. *)
-    val packCodeStream: int -> int Seq.t -> Word8.word Seq.t
+    val packCodeStream: int -> int ArraySlice.slice -> Word8.word ArraySlice.slice
   end
 
   (* Write many images as an animation. All images must be the same dimension. *)
   val writeMany: string  (* output path *)
               -> int     (* microsecond delay between images *)
               -> Palette.t
-              -> {width: int, height: int, numImages: int, getImage: int -> int Seq.t}
+              -> {width: int, height: int, numImages: int, getImage: int -> int ArraySlice.slice}
               -> unit
 
   val write: string -> image -> unit
@@ -54,8 +54,82 @@ struct
 
   structure AS = ArraySlice
 
+  structure ExtraBinIO =
+  struct
+
+    fun w8 file (w: Word8.word) = BinIO.output1 (file, w)
+
+    fun w64b file (w: Word64.word) =
+      let
+        val w8 = w8 file
+        open Word64
+        infix 2 >> andb
+      in
+        w8 (Word8.fromLarge (w >> 0w56));
+        w8 (Word8.fromLarge (w >> 0w48));
+        w8 (Word8.fromLarge (w >> 0w40));
+        w8 (Word8.fromLarge (w >> 0w32));
+        w8 (Word8.fromLarge (w >> 0w24));
+        w8 (Word8.fromLarge (w >> 0w16));
+        w8 (Word8.fromLarge (w >> 0w8));
+        w8 (Word8.fromLarge w)
+      end
+
+    fun w32b file (w: Word32.word) =
+      let
+        val w8 = w8 file
+        val w = Word32.toLarge w
+        open Word64
+        infix 2 >> andb
+      in
+        w8 (Word8.fromLarge (w >> 0w24));
+        w8 (Word8.fromLarge (w >> 0w16));
+        w8 (Word8.fromLarge (w >> 0w8));
+        w8 (Word8.fromLarge w)
+      end
+
+    fun w32l file (w: Word32.word) =
+      let
+        val w8 = w8 file
+        val w = Word32.toLarge w
+        open Word64
+        infix 2 >> andb
+      in
+        w8 (Word8.fromLarge w);
+        w8 (Word8.fromLarge (w >> 0w8));
+        w8 (Word8.fromLarge (w >> 0w16));
+        w8 (Word8.fromLarge (w >> 0w24))
+      end
+
+    fun w16b file (w: Word16.word) =
+      let
+        val w8 = w8 file
+        val w = Word16.toLarge w
+        open Word64
+        infix 2 >> andb
+      in
+        w8 (Word8.fromLarge (w >> 0w8));
+        w8 (Word8.fromLarge w)
+      end
+
+    fun w16l file (w: Word16.word) =
+      let
+        val w8 = w8 file
+        val w = Word16.toLarge w
+        open Word64
+        infix 2 >> andb
+      in
+        w8 (Word8.fromLarge w);
+        w8 (Word8.fromLarge (w >> 0w8))
+      end
+
+    fun wrgb file ({red, green, blue}: Color.pixel) =
+      ( w8 file red; w8 file green; w8 file blue )
+
+  end
+
   type pixel = Color.pixel
-  type image = {height: int, width: int, data: pixel Seq.t}
+  type image = {height: int, width: int, data: pixel ArraySlice.slice}
 
   fun err msg =
     raise Fail ("GIF: " ^ msg)
@@ -73,10 +147,10 @@ struct
   structure Palette =
   struct
 
-    type t = {colors: pixel Seq.t, remap: image -> int Seq.t}
+    type t = {colors: pixel ArraySlice.slice, remap: image -> int ArraySlice.slice}
 
     fun remapColor ({remap, ...}: t) px =
-      Seq.nth (remap {width=1, height=1, data=Seq.fromList [px]}) 0
+      ArraySlice.sub(remap {width=1, height=1, data=ArraySlice.full(Array.fromList [px])}, 0)
 
     fun makeQuantized (rqq, gqq, bqq) =
       let
@@ -128,10 +202,11 @@ struct
         val (numQuantized, channelIndices, pack, colorOfQuantizeIdx) =
           makeQuantized qpackage
       in
-        { colors = Seq.tabulate colorOfQuantizeIdx numQuantized
+        { colors = ArraySlice.full(Array.tabulate(numQuantized, colorOfQuantizeIdx))
         , remap = fn ({data, ...}: image) =>
-            AS.full (SeqBasis.tabulate 1000 (0, Seq.length data) (fn i =>
-              pack (channelIndices (Seq.nth data i))))
+                     AS.full (Array.tabulate
+                                  (ArraySlice.length data,
+                                   fn i => pack (channelIndices (AS.sub(data,i)))))
         }
       end
 
@@ -144,7 +219,7 @@ struct
         err "summarize: Too many required colors"
       else
       let
-        val n = Seq.length data
+        val n = ArraySlice.length data
 
         val dist = Color.sqDistance
 
@@ -187,7 +262,7 @@ struct
         val candidatesSize = 20
 
         fun sample i =
-          Seq.nth data (Util.hash i mod n)
+          ArraySlice.sub(data, Util.hash i mod n)
 
         fun chooseColorsLoop i =
           if tableSize () = paletteSize then () else
@@ -211,16 +286,16 @@ struct
 
         (* Compact the table *)
         val buckets = AS.full table
-        val bucketSizes = Seq.map List.length buckets
+        val bucketSizes = Util.arrayMap List.length buckets
         val bucketOffsets =
-          AS.full (SeqBasis.scan 100 op+ 0 (0, numBuckets) (Seq.nth bucketSizes))
-        val palette = ForkJoin.alloc paletteSize {blue=0w0,green=0w0,red=0w0}
+            Util.arrayScan op+ 0 numBuckets (fn i => ArraySlice.sub(bucketSizes, i))
+        val palette = Array.array(paletteSize, {blue=0w0,green=0w0,red=0w0})
         val _ =
           Util.for (0, numBuckets) (fn i =>
             ignore (Util.copyListIntoArray
-              (Seq.nth buckets i)
+              (ArraySlice.sub(buckets,i))
               palette
-              (Seq.nth bucketOffsets i)))
+              (ArraySlice.sub(bucketOffsets,i))))
         val palette = AS.full palette
 
         (* remap by lookup into compacted table *)
@@ -237,19 +312,19 @@ struct
               Util.loop (bounds b) md (fn (md, b) =>
                 let
                   val bucketIdx = pack (r, g, b)
-                  val bStart = Seq.nth bucketOffsets bucketIdx
-                  val bEnd = Seq.nth bucketOffsets (bucketIdx+1)
+                  val bStart = ArraySlice.sub(bucketOffsets, bucketIdx)
+                  val bEnd = ArraySlice.sub(bucketOffsets, bucketIdx+1)
                 in
                   Util.loop (bStart, bEnd) md (fn (md, i) =>
-                    chooseMin (md, (i, dist (color, Seq.nth palette i))))
+                    chooseMin (md, (i, dist (color, ArraySlice.sub(palette, i)))))
                 end)))
           in
             Int.max (0, i)
           end
 
         fun remap {width, height, data} =
-          AS.full (SeqBasis.tabulate 100 (0, Seq.length data)
-                    (remapOne o Seq.nth data))
+          AS.full (Array.tabulate(ArraySlice.length data,
+                                  (remapOne o (fn i => ArraySlice.sub(data,i)))))
       in
         {colors = palette, remap = remap}
       end
@@ -284,7 +359,7 @@ struct
     fun new numColors =
       { nextCode = ref (Util.boundPow2 numColors + 2)
       , numColors = numColors
-      , table = Array.array (4096, [])
+      , table = Array.array(4096, [])
       }
 
     fun clear {nextCode, numColors, table} =
@@ -322,7 +397,7 @@ struct
         (Array.update (data, nextIdx, x); (data, nextIdx+1))
       else
         let
-          val data' = ForkJoin.alloc (2 * Array.length data + 1) x
+          val data' = Array.array(2 * Array.length data + 1, x)
         in
           Util.for (0, Array.length data) (fn i =>
             Array.update (data', i, Array.sub (data, i)));
@@ -334,54 +409,6 @@ struct
       AS.slice (data, 0, SOME nextIdx)
   end
 
-(*
-  structure DynArrayList =
-  struct
-    type 'a t = int * 'a array * ('a array list)
-
-    val chunkSize = 256
-
-    fun new () =
-      (0, ForkJoin.alloc chunkSize, [])
-
-    fun push x (nextIdx, chunk, tail) =
-      ( Array.update (chunk, nextIdx, x)
-      ; if nextIdx+1 < chunkSize then
-          (nextIdx+1, chunk, tail)
-        else
-          (0, ForkJoin.alloc chunkSize, chunk :: tail)
-      )
-
-    fun toSeq (nextIdx, chunk, tail) =
-      let
-        val totalSize = nextIdx + (chunkSize * List.length tail)
-        val result = ForkJoin.alloc totalSize
-
-        fun writeChunks cs i =
-          case cs of
-            [] => ()
-          | c :: cs' =>
-              ( Array.copy {src = c, dst = result, di = i - Array.length c}
-              ; writeChunks cs' (i - Array.length c)
-              )
-      in
-        Util.for (0, nextIdx) (fn i =>
-          Array.update (result, totalSize - nextIdx + i, Array.sub (chunk, i)));
-        writeChunks tail (totalSize - nextIdx);
-        AS.full result
-      end
-  end
-*)
-
-(*
-  structure DynList =
-  struct
-    type 'a t = 'a list
-    fun new () = []
-    fun push x list = x :: list
-    fun toSeq xs = Seq.rev (Seq.fromList xs)
-  end
-*)
 
   (* =================================================================== *)
 
@@ -394,7 +421,7 @@ struct
 
     fun codeStream numColors colorIndices =
       let
-        fun colorIdx i = Seq.nth colorIndices i
+        fun colorIdx i = ArraySlice.sub(colorIndices, i)
 
         val clear = Util.boundPow2 numColors
         val eoi = clear + 1
@@ -407,7 +434,7 @@ struct
         (* The buffer is implicit, represented instead by currentCode
          * i is the next index into `colorIndices` *)
         fun loop stream currentCode i =
-          if i >= Seq.length colorIndices then
+          if (i >= ArraySlice.length colorIndices) then
             finish (DS.push currentCode stream)
           else
             case T.maybeLookup (currentCode, colorIdx i) table of
@@ -421,7 +448,7 @@ struct
                       (colorIdx i) (i+1)
                   )
       in
-        if Seq.length colorIndices = 0 then
+        if ArraySlice.length colorIndices = 0 then
           err "empty color index sequence"
         else
           loop (DS.push clear (DS.new ())) (colorIdx 0) 1
@@ -437,8 +464,8 @@ struct
 
     fun packCodeStream numColors codes =
       let
-        val n = Seq.length codes
-        fun code i = Seq.nth codes i
+        val n = ArraySlice.length codes
+        fun code i = ArraySlice.sub(codes, i)
         val clear = Util.boundPow2 numColors
         val eoi = clear+1
         val minCodeSize = ceilLog2 numColors
@@ -455,15 +482,15 @@ struct
          *)
 
         val clears =
-          AS.full (SeqBasis.filter 2000 (0, n) (fn i => i) (fn i => code i = clear))
-        val numClears = Seq.length clears
+          Util.arrayFilter (fn i => code i = clear) n (fn i => i)
+        val numClears = ArraySlice.length clears
 
-        val widths = ForkJoin.alloc n 0
+        val widths = Array.array(n,0)
         val _ = Array.update (widths, 0, firstCodeWidth)
-        val _ = ForkJoin.parfor 1 (0, numClears) (fn c =>
+        val _ = Util.for (0, numClears) (fn c =>
           let
-            val i = 1 + Seq.nth clears c
-            val j = if c = numClears-1 then n else 1 + Seq.nth clears (c+1)
+            val i = 1 + ArraySlice.sub(clears, c)
+            val j = if c = numClears-1 then n else 1 + ArraySlice.sub(clears, c+1)
 
             (* max code in table, up to (but not including) index k *)
             fun currentMaxCode k =
@@ -482,10 +509,10 @@ struct
           end)
         val widths = AS.full widths
 
-        val totalBitWidth = Seq.reduce op+ 0 widths
+        val totalBitWidth = ArraySlice.foldl op+ 0 widths
         val packedSize = Util.ceilDiv totalBitWidth 8
 
-        val packed = ForkJoin.alloc packedSize 0w0
+        val packed = Array.array(packedSize,0w0)
 
         fun flushBuffer (oi, buffer, used) =
           if used < 8 then
@@ -511,7 +538,7 @@ struct
           else
             let
               val thisCode = code ci
-              val thisWidth = Seq.nth widths ci
+              val thisWidth = ArraySlice.sub(widths, ci)
               val buffer' =
                 LargeWord.orb (buffer,
                   LargeWord.<< (LargeWord.fromInt thisCode, Word.fromInt used))
@@ -524,15 +551,15 @@ struct
         val _ = pack (0, packedSize) (0, n) 0w0 0
         val packed = AS.full packed
         val numBlocks = Util.ceilDiv packedSize 255
-        val output = ForkJoin.alloc (packedSize + numBlocks + 1) 0w0
+        val output = Array.array(packedSize + numBlocks + 1, 0w0)
       in
-        ForkJoin.parfor 10 (0, numBlocks) (fn i =>
+        Util.for (0, numBlocks) (fn i =>
           let
             val size = if i < numBlocks-1 then 255 else packedSize - 255*i
           in
             Array.update (output, 256*i, Word8.fromInt size);
             Util.for (0, size) (fn j =>
-              Array.update (output, 256*i + 1 + j, Seq.nth packed (255*i + j)))
+              Array.update (output, 256*i + 1 + j, ArraySlice.sub(packed, 255*i + j)))
           end);
 
         Array.update (output, packedSize + numBlocks, 0w0);
@@ -576,18 +603,18 @@ struct
       val width16 = checkToWord16 "width" width
       val height16 = checkToWord16 "height" height
 
-      val numberOfColors = Seq.length (#colors palette)
+      val numberOfColors = ArraySlice.length (#colors palette)
 
       val _ =
         if numberOfColors <= 256 then ()
         else err "Must have at most 256 colors in the palette"
 
       val (imageData, tm) = Util.getTime (fn _ =>
-        AS.full (SeqBasis.tabulate 1 (0, numImages) (fn i =>
+        AS.full (Array.tabulate (numImages, fn i =>
           let
             val img = getImage i
           in
-            if Seq.length img <> height * width then
+            if ArraySlice.length img <> height * width then
               err "Not all images are the right dimensions"
             else
               LZW.packCodeStream numberOfColors
@@ -631,8 +658,8 @@ struct
        * global color table
        *)
 
-      Util.for (0, numberOfColors) (fn i =>
-        wrgb (Seq.nth (#colors palette) i));
+      Util.for (0, numberOfColors)
+               (fn i => wrgb (AS.sub(#colors palette, i)));
 
       Util.for (numberOfColors, Util.boundPow2 numberOfColors) (fn i =>
         wrgb Color.black);
@@ -654,7 +681,7 @@ struct
 
       Util.for (0, numImages) (fn i =>
         let
-          val bytes = Seq.nth imageData i
+          val bytes = ArraySlice.sub(imageData, i)
         in
           (* ==========================
            * graphics control extension.
@@ -688,8 +715,8 @@ struct
            *)
 
           w8 (Word8.fromInt (ceilLog2 numberOfColors));
-          Util.for (0, Seq.length bytes) (fn i =>
-            w8 (Seq.nth bytes i))
+          Util.for (0, ArraySlice.length bytes) (fn i =>
+            w8 (ArraySlice.sub(bytes,i)))
         end);
 
       (* ================================

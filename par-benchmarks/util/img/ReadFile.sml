@@ -9,8 +9,8 @@
 structure ReadFile:
 sig
   val contents: string -> string
-  val contentsSeq: string -> char Seq.t
-  val contentsBinSeq: string -> Word8.word Seq.t
+  val contentsSeq: string -> char Array.array
+  val contentsBinSeq: string -> Word8.word Array.array
 end =
 struct
 
@@ -19,8 +19,7 @@ struct
           val s = TextIO.inputAll file
           val () = TextIO.closeIn file
       in
-        ArraySlice.full(Array.tabulate(String.size s,
-                                       fn i => String.sub(s, i)))
+        Array.tabulate(String.size s, fn i => String.sub(s, i))
       end
 
   fun contentsBinSeq filename =
@@ -28,8 +27,7 @@ struct
           val s = BinIO.inputAll file
           val () = BinIO.closeIn file
       in
-        ArraySlice.full(Array.tabulate(Word8Vector.length s,
-                                       fn i => Word8Vector.sub(s, i)))
+        Array.tabulate(Word8Vector.length s, fn i => Word8Vector.sub(s, i))
       end
 
   fun contents filename =

@@ -7,7 +7,7 @@ sig
   type pixel = Color.pixel
 
   (* flat sequence; pixel (i, j) is at data[i*width + j] *)
-  type image = {height: int, width: int, data: pixel Seq.t}
+  type image = {height: int, width: int, data: pixel ArraySlice.slice}
   type box = {topleft: int * int, botright: int * int}
 
   val elem: image -> (int * int) -> pixel
@@ -26,19 +26,18 @@ sig
 
 end =
 struct
-
-  type 'a seq = 'a Seq.t
+  structure AS = ArraySlice
 
   type channel = Color.channel
   type pixel = Color.pixel
-  type image = {height: int, width: int, data: pixel Seq.t}
+  type image = {height: int, width: int, data: pixel ArraySlice.slice}
   type box = {topleft: int * int, botright: int * int}
 
   fun elem ({height, width, data}: image) (i, j) =
     if i < 0 orelse i >= height orelse j < 0 orelse j >= width then
       raise Subscript
     else
-      Seq.nth data (i*width + j)
+      AS.sub (data, i*width + j)
 
   fun subimage {topleft=(i1,j1), botright=(i2,j2)} image =
     let
@@ -55,7 +54,7 @@ struct
     in
       { width = w
       , height = h
-      , data = Seq.tabulate newElem (w * h)
+      , data = AS.full(Array.tabulate (w * h, newElem))
       }
     end
 
@@ -74,7 +73,7 @@ struct
     in
       { width = #width image
       , height = #height image
-      , data = Seq.tabulate newElem (#width image * #height image)
+      , data = AS.full(Array.tabulate (#width image * #height image, newElem))
       }
     end
 
@@ -88,14 +87,12 @@ struct
 
   fun parse3 contents =
     let
-      (* val tokens = Seq.fromList (String.tokens Char.isSpace contents) *)
-      (* val numToks = Seq.length tokens *)
       val (numToks, tokRange) = Tokenize.tokenRanges Char.isSpace contents
       fun tok i =
         let
           val (lo, hi) = tokRange i
         in
-          Seq.subseq contents (lo, hi-lo)
+          ArraySlice.slice(contents, lo, SOME (hi-lo))
         end
       fun strTok i =
         Parse.parseString (tok i)
@@ -148,7 +145,7 @@ struct
     in
       { width = width
       , height = height
-      , data = Seq.tabulate pixel (width * height)
+      , data = AS.full(Array.tabulate(width * height, pixel))
       }
     end
 
@@ -156,15 +153,15 @@ struct
 
   fun parse6 contents =
     let
-      val filetype = Parse.parseString (Seq.subseq contents (0, 2))
+      val filetype = Parse.parseString (ArraySlice.slice (contents, 0, SOME 2))
       val _ =
         if filetype = "P6" then ()
         else raise Fail "should not happen"
 
       fun findFirst p i =
-        if i >= Seq.length contents then
+        if i >= Array.length contents then
           NONE
-        else if p (Seq.nth contents i) then
+        else if p (Array.sub(contents, i)) then
           SOME i
         else
           findFirst p (i+1)
@@ -174,14 +171,14 @@ struct
           NONE => NONE
         | SOME i =>
             case findFirst Char.isSpace i of
-              NONE => SOME (i, Seq.length contents)
+              NONE => SOME (i, Array.length contents)
             | SOME j => SOME (i, j)
 
       (* start must be on a space *)
       fun chompToken start =
         case findToken start of
           NONE => NONE
-        | SOME (i, j) => SOME (Seq.subseq contents (i, j-i), j)
+        | SOME (i, j) => SOME (ArraySlice.slice(contents, i, SOME (j-i)), j)
 
       fun chompInt thingName i =
         case chompToken i of
@@ -199,8 +196,8 @@ struct
 
       val cursor = 2
       val _ =
-        if Seq.length contents > 2 andalso
-           Char.isSpace (Seq.nth contents 2)
+        if Array.length contents > 2 andalso
+           Char.isSpace (Array.sub (contents, 2))
         then ()
         else raise Fail "error parsing .ppm file: unexpected format"
 
@@ -220,18 +217,18 @@ struct
         | NONE => raise Fail "error parsing .ppm file: missing contents"
 
       val _ =
-        if Seq.length contents - cursor >= numChannels then ()
+        if Array.length contents - cursor >= numChannels then ()
         else raise Fail "error parsing .ppm file: too few color channels"
 
       fun chan i =
-        Word8.fromInt (Char.ord (Seq.nth contents (cursor + i)))
+        Word8.fromInt (Char.ord (Array.sub (contents, cursor + i)))
 
       fun pixel i =
         {red = chan (3*i), green = chan (3*i + 1), blue = chan (3*i + 2)}
     in
       { width = width
       , height = height
-      , data = Seq.tabulate pixel (width * height)
+      , data = AS.full (Array.tabulate (width * height, pixel))
       }
     end
 
@@ -241,7 +238,7 @@ struct
     let
       val contents = ReadFile.contentsSeq filepath
     in
-      case Parse.parseString (Seq.subseq contents (0, 2)) of
+      case Parse.parseString (AS.slice(contents, 0, SOME 2)) of
         "P3" => parse3 contents
       | "P6" => parse6 contents
       | _ => raise Fail "error parsing .ppm file: unknown or unsupported format"

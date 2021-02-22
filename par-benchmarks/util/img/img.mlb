@@ -1,0 +1,12 @@
+local
+  $(SML_LIB)/basis/basis.mlb
+  $(SML_LIB)/basis/WordN.sml
+  Tokenize.sml
+  Parse.sml
+  ReadFile.sml
+  Util.sml
+in
+  Color.sml
+  PPM.sml
+  GIF.sml
+end

@@ -3,6 +3,8 @@
 structure Parse =
 struct
 
+structure AS = ArraySlice
+
   fun parseDigit char =
     let
       val code = Char.ord char
@@ -17,8 +19,8 @@ struct
 
   fun parseInt s =
     let
-      val n = Seq.length s
-      fun c i = Seq.nth s i
+      val n = AS.length s
+      fun c i = AS.sub(s,i)
 
       fun build x i =
         if i >= n then SOME x else
@@ -41,12 +43,12 @@ struct
 
   fun parseReal s =
     let
-      val n = Seq.length s
-      fun c i = Seq.nth s i
+      val n = AS.length s
+      fun c i = AS.sub(s,i)
 
       fun buildAfterE x i =
         Option.map (fn e => x * Math.pow (10.0, Real.fromInt e))
-          (parseInt (Seq.subseq s (i, n-i)))
+          (parseInt (AS.subslice(s, i, SOME (n-i))))
 
       fun buildAfterPoint m x i =
         if i >= n then SOME x else
@@ -82,7 +84,7 @@ struct
     end
 
   fun parseString s =
-    CharVector.tabulate (Seq.length s, Seq.nth s)
+    CharVector.tabulate (AS.length s, fn i => AS.sub(s,i))
 
   (* read a Word16, big endian, starting at index i *)
   fun r16b bytes i =
@@ -91,8 +93,8 @@ struct
       val op<< = Word64.<<
       val op orb = Word64.orb
 
-      val w = Word8.toLarge (Seq.nth bytes i)
-      val w = (w << 0w8) orb (Word8.toLarge (Seq.nth bytes (i+1)))
+      val w = Word8.toLarge (AS.sub bytes i)
+      val w = (w << 0w8) orb (Word8.toLarge (AS.sub bytes (i+1)))
     in
       Word16.fromLarge w
     end
@@ -104,10 +106,10 @@ struct
       val op<< = Word64.<<
       val op orb = Word64.orb
 
-      val w = Word8.toLarge (Seq.nth bytes i)
-      val w = (w << 0w8) orb (Word8.toLarge (Seq.nth bytes (i+1)))
-      val w = (w << 0w8) orb (Word8.toLarge (Seq.nth bytes (i+2)))
-      val w = (w << 0w8) orb (Word8.toLarge (Seq.nth bytes (i+3)))
+      val w = Word8.toLarge (AS.sub bytes i)
+      val w = (w << 0w8) orb (Word8.toLarge (AS.sub bytes (i+1)))
+      val w = (w << 0w8) orb (Word8.toLarge (AS.sub bytes (i+2)))
+      val w = (w << 0w8) orb (Word8.toLarge (AS.sub bytes (i+3)))
     in
       Word32.fromLarge w
     end
@@ -119,14 +121,14 @@ struct
       val op<< = Word64.<<
       val op orb = Word64.orb
 
-      val w = Word8.toLarge (Seq.nth bytes i)
-      val w = (w << 0w8) orb (Word8.toLarge (Seq.nth bytes (i+1)))
-      val w = (w << 0w8) orb (Word8.toLarge (Seq.nth bytes (i+2)))
-      val w = (w << 0w8) orb (Word8.toLarge (Seq.nth bytes (i+3)))
-      val w = (w << 0w8) orb (Word8.toLarge (Seq.nth bytes (i+4)))
-      val w = (w << 0w8) orb (Word8.toLarge (Seq.nth bytes (i+5)))
-      val w = (w << 0w8) orb (Word8.toLarge (Seq.nth bytes (i+6)))
-      val w = (w << 0w8) orb (Word8.toLarge (Seq.nth bytes (i+7)))
+      val w = Word8.toLarge (AS.sub bytes i)
+      val w = (w << 0w8) orb (Word8.toLarge (AS.sub bytes (i+1)))
+      val w = (w << 0w8) orb (Word8.toLarge (AS.sub bytes (i+2)))
+      val w = (w << 0w8) orb (Word8.toLarge (AS.sub bytes (i+3)))
+      val w = (w << 0w8) orb (Word8.toLarge (AS.sub bytes (i+4)))
+      val w = (w << 0w8) orb (Word8.toLarge (AS.sub bytes (i+5)))
+      val w = (w << 0w8) orb (Word8.toLarge (AS.sub bytes (i+6)))
+      val w = (w << 0w8) orb (Word8.toLarge (AS.sub bytes (i+7)))
     in
       w
     end
@@ -138,8 +140,8 @@ struct
       val op<< = Word64.<<
       val op orb = Word64.orb
 
-      val w = Word8.toLarge (Seq.nth bytes (i+1))
-      val w = (w << 0w8) orb (Word8.toLarge (Seq.nth bytes i))
+      val w = Word8.toLarge (AS.sub bytes (i+1))
+      val w = (w << 0w8) orb (Word8.toLarge (AS.sub bytes i))
     in
       Word16.fromLarge w
     end
@@ -151,10 +153,10 @@ struct
       val op<< = Word64.<<
       val op orb = Word64.orb
 
-      val w = Word8.toLarge (Seq.nth bytes (i+3))
-      val w = (w << 0w8) orb (Word8.toLarge (Seq.nth bytes (i+2)))
-      val w = (w << 0w8) orb (Word8.toLarge (Seq.nth bytes (i+1)))
-      val w = (w << 0w8) orb (Word8.toLarge (Seq.nth bytes i))
+      val w = Word8.toLarge (AS.sub bytes (i+3))
+      val w = (w << 0w8) orb (Word8.toLarge (AS.sub bytes (i+2)))
+      val w = (w << 0w8) orb (Word8.toLarge (AS.sub bytes (i+1)))
+      val w = (w << 0w8) orb (Word8.toLarge (AS.sub bytes i))
     in
       Word32.fromLarge w
     end
@@ -166,14 +168,14 @@ struct
       val op<< = Word64.<<
       val op orb = Word64.orb
 
-      val w = Word8.toLarge (Seq.nth bytes (i+7))
-      val w = (w << 0w8) orb (Word8.toLarge (Seq.nth bytes (i+6)))
-      val w = (w << 0w8) orb (Word8.toLarge (Seq.nth bytes (i+5)))
-      val w = (w << 0w8) orb (Word8.toLarge (Seq.nth bytes (i+4)))
-      val w = (w << 0w8) orb (Word8.toLarge (Seq.nth bytes (i+3)))
-      val w = (w << 0w8) orb (Word8.toLarge (Seq.nth bytes (i+2)))
-      val w = (w << 0w8) orb (Word8.toLarge (Seq.nth bytes (i+1)))
-      val w = (w << 0w8) orb (Word8.toLarge (Seq.nth bytes i))
+      val w = Word8.toLarge (AS.sub(bytes,i+7))
+      val w = (w << 0w8) orb (Word8.toLarge (AS.sub(bytes,i+6)))
+      val w = (w << 0w8) orb (Word8.toLarge (AS.sub(bytes,i+5)))
+      val w = (w << 0w8) orb (Word8.toLarge (AS.sub(bytes,i+4)))
+      val w = (w << 0w8) orb (Word8.toLarge (AS.sub(bytes,i+3)))
+      val w = (w << 0w8) orb (Word8.toLarge (AS.sub(bytes,i+2)))
+      val w = (w << 0w8) orb (Word8.toLarge (AS.sub(bytes,i+1)))
+      val w = (w << 0w8) orb (Word8.toLarge (AS.sub(bytes,i)))
     in
       w
     end
